@@ -3,7 +3,6 @@ VULNERABLE CODE FOR CODE REVIEW TESTING
 This file intentionally contains security vulnerabilities to test code review tools.
 DO NOT USE IN PRODUCTION
 """
-
 import subprocess
 import pickle
 import random
