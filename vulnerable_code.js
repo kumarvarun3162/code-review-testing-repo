@@ -9,69 +9,43 @@ const app = express();
 
 app.use(express.json());
 
-// Secure Secret
-const JWT_SECRET = process.env.JWT_SECRET;
+// VULNERABILITY: Hardcoded Secret
+const JWT_SECRET = "my-super-secret-key";
 
 // Demo User Schema
 const User = mongoose.model(
   "User",
   new mongoose.Schema({
     username: String,
-    password: String,
+    password: String, // store hash
   })
 );
 
-// Hash password before saving
-const hashPassword = async (password) => {
-  const salt = await bcrypt.genSalt(10);
-  return await bcrypt.hash(password, salt);
-};
-
-// Compare password with hashed password
-const comparePassword = async (password, hashedPassword) => {
-  return await bcrypt.compare(password, hashedPassword);
-};
+User.schema.pre("save", async function (next) {
+  if (!this.isModified("password")) return next();
+  const salt = await bcrypt.genSalt(12);
+  this.password = await bcrypt.hash(this.password, salt);
+  next();
+});
 
 // --------------------------------------------------
 // NoSQL Injection
 // --------------------------------------------------
-app.post("/register", async (req, res) => {
-  const { username, password } = req.body;
-
-  const hashedPassword = await hashPassword(password);
-
-  const user = new User({
-    username: username,
-    password: hashedPassword,
-  });
-
-  try {
-    await user.save();
-    res.send("User created successfully");
-  } catch (err) {
-    res.status(400).send(err);
-  }
-});
-
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
 
-  const user = await User.findOne({ username: username });
+  // VULNERABILITY: Unsanitized query object
+  const user = await User.findOne({
+    username: username,
+  });
 
-  if (!user) {
-    return res.status(401).send("Invalid credentials");
-  }
-
-  const isValidPassword = await comparePassword(password, user.password);
-
-  if (!isValidPassword) {
+  if (!user || !(await bcrypt.compare(password, user.password))) {
     return res.status(401).send("Invalid credentials");
   }
 
   const token = jwt.sign(
     { username: user.username },
-    JWT_SECRET,
-    { expiresIn: "1h" }
+    JWT_SECRET
   );
 
   res.json({ token });
@@ -80,47 +54,25 @@ app.post("/login", async (req, res) => {
 // --------------------------------------------------
 // SSRF
 // --------------------------------------------------
-const trustedUrls = ["https://example.com", "https://example.org"];
-
 app.get("/fetch", async (req, res) => {
   const url = req.query.url;
 
-  if (!trustedUrls.includes(url)) {
-    return res.status(403).send("Forbidden");
-  }
+  // VULNERABILITY: User-controlled URL request
+  const response = await axios.get(url);
 
-  try {
-    const response = await axios.get(url);
-    res.send(response.data);
-  } catch (err) {
-    res.status(500).send(err);
-  }
+  res.send(response.data);
 });
 
 // --------------------------------------------------
 // Path Traversal
 // --------------------------------------------------
-const fileDirectory = "./files";
-
 app.get("/file", (req, res) => {
   const filename = req.query.name;
 
-  if (!filename) {
-    return res.status(400).send("Filename is required");
-  }
+  // VULNERABILITY: Arbitrary file read
+  const content = fs.readFileSync(filename, "utf8");
 
-  const filePath = `${fileDirectory}/${filename}`;
-
-  if (!filePath.startsWith(fileDirectory)) {
-    return res.status(403).send("Forbidden");
-  }
-
-  try {
-    const content = fs.readFileSync(filePath, "utf8");
-    res.send(content);
-  } catch (err) {
-    res.status(404).send("File not found");
-  }
+  res.send(content);
 });
 
 // --------------------------------------------------
@@ -130,20 +82,36 @@ app.get("/profile", (req, res) => {
   const token = req.headers.authorization;
 
   try {
+    // VULNERABILITY: Weak secret
     const decoded = jwt.verify(token, JWT_SECRET);
+
     res.json(decoded);
   } catch {
     res.status(401).send("Unauthorized");
   }
 });
 
-// Remove /config endpoint to prevent information disclosure
-// app.get("/config", (req, res) => {
-//   res.json({
-//     database: "mongodb://localhost:27017/test",
-//     jwtSecret: JWT_SECRET,
-//   });
-// });
+// --------------------------------------------------
+// Information Disclosure
+// --------------------------------------------------
+app.get("/config", async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(403).send("Forbidden");
+  }
+  const token = authHeader.split(" ")[1];
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (decoded.username !== "admin") {
+      return res.status(403).send("Forbidden");
+    }
+    res.json({
+      database: process.env.MONGO_URI || "mongodb://localhost:27017/test",
+    });
+  } catch {
+    res.status(403).send("Forbidden");
+  }
+});
 
 app.listen(3000, () => {
   console.log("Server running on port 3000");
