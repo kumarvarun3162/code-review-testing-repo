@@ -1,15 +1,13 @@
 import os
-import pathlib
 import subprocess
+from pathlib import Path
 
 # Directly using user-controlled input in a system command
-def delete_file(filename):
-    # Restrict deletion to a safe directory and validate the filename
-    safe_dir = pathlib.Path('/tmp/safe_dir').resolve()
-    target = (safe_dir / filename).resolve()
-    if not str(target).startswith(str(safe_dir)):
-        raise ValueError('Invalid file path')
-    subprocess.run(['rm', '-f', str(target)], check=True, shell=False)
+user_input = input("Enter the filename to delete: ")
+safe_path = Path(user_input).resolve()
+if not safe_path.is_file() or safe_path.parent != Path.cwd():
+    print('Invalid file')
+    exit(1)
 
-user_input = input('Enter the filename to delete: ')
-delete_file(user_input)
+# Use subprocess.run to delete file safely
+subprocess.run(['rm', '-f', str(safe_path)], check=True)
