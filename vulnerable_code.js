@@ -3,7 +3,9 @@ const mongoose = require("mongoose");
 const axios = require("axios");
 const fs = require("fs");
 const jwt = require("jsonwebtoken");
-const bcrypt = require("bcrypt");
+const bcrypt = require('bcrypt');
+const path = require('path');
+const { URL } = require('url');
 
 const app = express();
 
@@ -17,17 +19,9 @@ const User = mongoose.model(
   "User",
   new mongoose.Schema({
     username: String,
-    password: String, // store hash
+    password: String,
   })
 );
-
-User.schema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
-  const salt = await bcrypt.genSalt(12);
-  this.password = await bcrypt.hash(this.password, salt);
-  next();
-});
-
 // --------------------------------------------------
 // NoSQL Injection
 // --------------------------------------------------
@@ -39,7 +33,12 @@ app.post("/login", async (req, res) => {
     username: username,
   });
 
-  if (!user || !(await bcrypt.compare(password, user.password))) {
+  if (!user) {
+    return res.status(401).send("Invalid credentials");
+  }
+
+  const match = await bcrypt.compare(password, user.password);
+  if (!match) {
     return res.status(401).send("Invalid credentials");
   }
 
@@ -58,21 +57,33 @@ app.get("/fetch", async (req, res) => {
   const url = req.query.url;
 
   // VULNERABILITY: User-controlled URL request
-  const response = await axios.get(url);
-
-  res.send(response.data);
+  try {
+    const parsedUrl = new URL(url);
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) throw new Error('Invalid protocol');
+    const response = await axios.get(parsedUrl.toString());
+    res.send(response.data);
+  } catch (err) {
+    res.status(400).send('Invalid URL');
+  }
 });
 
 // --------------------------------------------------
 // Path Traversal
 // --------------------------------------------------
+const BASE_DIR = path.resolve(__dirname, 'public');
 app.get("/file", (req, res) => {
   const filename = req.query.name;
 
   // VULNERABILITY: Arbitrary file read
-  const content = fs.readFileSync(filename, "utf8");
-
-  res.send(content);
+  const normalized = path.normalize(filename);
+  const filePath = path.join(BASE_DIR, normalized);
+  if (!filePath.startsWith(BASE_DIR)) return res.status(400).send('Invalid path');
+  try {
+    const content = fs.readFileSync(filePath, "utf8");
+    res.send(content);
+  } catch (err) {
+    res.status(404).send('File not found');
+  }
 });
 
 // --------------------------------------------------
@@ -94,23 +105,8 @@ app.get("/profile", (req, res) => {
 // --------------------------------------------------
 // Information Disclosure
 // --------------------------------------------------
-app.get("/config", async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    return res.status(403).send("Forbidden");
-  }
-  const token = authHeader.split(" ")[1];
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    if (decoded.username !== "admin") {
-      return res.status(403).send("Forbidden");
-    }
-    res.json({
-      database: process.env.MONGO_URI || "mongodb://localhost:27017/test",
-    });
-  } catch {
-    res.status(403).send("Forbidden");
-  }
+app.get("/config", (req, res) => {
+  res.status(403).send('Forbidden');
 });
 
 app.listen(3000, () => {
