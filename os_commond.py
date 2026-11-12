@@ -1,13 +1,23 @@
 import os
-import subprocess
 from pathlib import Path
+import subprocess
 
-# Directly using user-controlled input in a system command
+# Define a safe directory for deletions
+SAFE_DIR = Path.home() / "safe_delete"
+SAFE_DIR.mkdir(parents=True, exist_ok=True)
+
 user_input = input("Enter the filename to delete: ")
-safe_path = Path(user_input).resolve()
-if not safe_path.is_file() or safe_path.parent != Path.cwd():
-    print('Invalid file')
+# Resolve the path and ensure it is within SAFE_DIR
+file_path = (SAFE_DIR / user_input).resolve()
+if not str(file_path).startswith(str(SAFE_DIR.resolve())):
+    print("Error: Attempt to delete file outside allowed directory.")
     exit(1)
 
-# Use subprocess.run to delete file safely
-subprocess.run(['rm', '-f', str(safe_path)], check=True)
+try:
+    # Delete the file safely using subprocess.run
+    subprocess.run(["rm", "-f", str(file_path)], check=True, shell=False)
+    print(f"Deleted {file_path}")
+except subprocess.CalledProcessError as e:
+    print(f"Error deleting file: {e}")
+except Exception as e:
+    print(f"Unexpected error: {e}")
